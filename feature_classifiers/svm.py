@@ -96,14 +96,8 @@ class SVM(FeatureClassifier):
 
 if __name__ == "__main__":
     test = SVM("testing")
-    #data = "/home/andrew/cbt_dialogue_system/featurizer/data/diagnosed.json"
-    #test.train(data)
-    #print(test.infer("I was diagnosed with depression"))
-    #print(test.infer("I have been diagnosed with depression."))
-    #print(test.infer("@ writing has always helped me deal with emotional stuff. i used to free write a lot when i was diagnosed with depression."))
-    #test.save_model("testing")
     from datetime import datetime
-    model_path = "/home/andrew/cbt_dialogue_system/featurizer/models/diagnosed_svm"
+    model_path = "/home/andrew/micromodels/models/diagnosed_svm"
     start = datetime.now()
     test.load_model(model_path)
     end = datetime.now()

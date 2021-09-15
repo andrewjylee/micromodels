@@ -4,7 +4,7 @@ Feature Classifier Abstract Class
 from typing import List, Mapping, Any
 
 import json
-from snorkel_engine.preprocessors import standard_preprocess
+#from snorkel_engine.preprocessors import standard_preprocess
 from utils import preprocess
 
 
@@ -100,8 +100,8 @@ class FeatureClassifier:
         Infer classifier
         """
         if do_preprocess:
-            #query = preprocess(query)
-            query = standard_preprocess(query)
+            query = preprocess(query)
+            #query = standard_preprocess(query)
         return self._infer(query)
 
     def _infer(self, query):

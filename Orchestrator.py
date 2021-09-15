@@ -10,40 +10,55 @@ import sys
 import time
 from pathos.multiprocessing import ProcessingPool as Pool
 from factory import FEATURE_CLASSIFIER_FACTORY
+from FeatureClassifier import FeatureClassifier
 from utils import preprocess
 
 
+MM_BASE_PATH = os.environ.get("MM_HOME")
+
 class Orchestrator:
     """
-    An Orchestrator is responsible for training, maintaining, loading,
-    and infering from multiple featurizer models.
+    An Orchestrator is responsible for training, loading, and predicting
+    from multiple micromodels.
     """
-    def __init__(self, configs=None):
-        self.configs = configs
+    def __init__(self, base_path: str, configs: List[Mapping[str, str]] = None):
+        """
+        :param base_path: filesystem path to where micromodels will be stored.
+        :param configs: list of micromodel configurations.
+        """
         self.pipeline = []
         self.cache = {}
-        self.model_basepath = os.path.join(
-            os.environ.get("CBT_DS_PATH"), "featurizer/models"
-        )
+        self.model_basepath = os.path.join(base_path, "models")
+        if configs is not None:
+            self.set_configs(configs)
 
-    def set_configs_from_file(self, config_file):
+    def set_configs_from_file(self, config_file: str) -> None:
         """
-        Load config file
+        Load and set Orchestrator's configuration based on input file.
+
+        :param config_file: filepath to configuration file
+        :returns: None
         """
         with open(config_file, "r") as file_p:
             configs = json.load(file_p)
         self.set_configs(configs)
 
-    def set_configs(self, configs):
+    def set_configs(self, configs: List[Mapping[str, str]]) -> None:
         """
-        Set config
+        Set Orchestrator's configuration.
+
+        :param configs: List of micromodel configurations.
+        :return: None
         """
         self._verify_configs(configs)
         self.configs = configs
 
-    def set_model_basepath(self, path):
+    def set_model_basepath(self, path: str) -> None:
         """
-        set model_basepath
+        Set model_basepath attribute.
+
+        :param path: filepath to directory storing all micromodels. 
+        :return: None
         """
         self.model_basepath = path
 
@@ -53,38 +68,61 @@ class Orchestrator:
         """
         self.cache = {}
 
-    def _verify_configs(self, configs, train=False):
+    def _verify_configs(self, configs: List[Mapping[str, str]]) -> None:
         """
-        Verify list of configs
+        Verify list of micromodel configurations.
+
+        :param configs: list of micromodel configurations
+        :return: None
+        :raises ValueError: raised when a configuration is invalid or
+            there are duplicate feature names.
         """
-        for config in configs:
-            self._verify_config(config, train=train)
+        # NOTE: _verify_config() is called in _get_model_name()
         feature_names = [self._get_model_name(config) for config in configs]
-        if len(feature_names) != len(configs):
-            raise ValueError("Duplicate feature names?")
+        if len(list(set(feature_names))) != len(configs):
+            raise ValueError(
+                "Number of feature names does not match the number of config \
+                entries. Are there duplicate feature names?"
+            )
 
     @staticmethod
-    def _verify_config(config, train=False):
+    def _verify_config(config: Mapping[str, str]) -> None:
         """
-        Verify single config
+        Verify a single config.
+
+        :param config: a micromodel configuration
+        :return: None
+        :raises ValueError: raised when configuration is invalid
         """
         required_fields = ["feature_name", "model_type"]
         for field in required_fields:
             if field not in config:
-                raise ValueError("%s missing" % field)
+                raise ValueError("Invalid config: %s missing" % field)
 
-    @staticmethod
-    def _get_model_name(config):
+    def _get_model_name(self, config: Mapping[str, str]) -> str:
         """
-        Get model name from config.
+        Get name of a micromodel based on its config.
+
+        :param config: a micromodel configuration
+        :return: name of micromodel
+        :raise ValueError: raised when configuration is invalid
         """
+        self._verify_config(config)
         return "%s_%s" % (config["feature_name"], config["model_type"])
 
-    def train_config(self, config, force_train=False):
+    def train_config(self, config: Mapping[str, str], force_train=False) -> FeatureClassifier:
         """
-        Train based on a single config
+        Fetch micromodel as specified in the input config.
+        If the micromodel has not been trained yet, this method will
+        train the model, add it to the cache, and return the model.
+        :force_train: allows users to always retrain a micromodel.
+
+        :param config: a micromodel configuration
+        :param force_train: flag for forcing a retrain
+        :return: FeatureClassifier
+        :raise KeyError: raised when an invalid model type is specified.
         """
-        self._verify_config(config, train=True)
+        self._verify_config(config)
         model_type = config.get("model_type")
         train_data = config.get("data")
         args = config.get("args", {})
@@ -93,53 +131,58 @@ class Orchestrator:
         try:
             model = FEATURE_CLASSIFIER_FACTORY[model_type](model_name)
         except KeyError:
-            raise KeyError("Invalid model type")
+            raise KeyError("Invalid model type %s" % model_type)
 
-        if force_train or model_name not in self.cache:
-            setup_config = config.get("setup_args", {})
-            if "name" not in setup_config:
-                setup_config["name"] = self._get_model_name(config)
-            model.setup(setup_config)
-            model.train(train_data, args)
-            model_path = config.get(
-                "model_path", os.path.join(self.model_basepath, model_name)
-            )
-            model.save_model(model_path)
-            self.cache[model_name] = model
+        if not force_train and model_name in self.cache:
+            return self.cache[model_name]
+
+        setup_config = config.get("setup_args", {})
+        if "name" not in setup_config:
+            setup_config["name"] = self._get_model_name(config)
+        model.setup(setup_config)
+        model.train(train_data, args)
+        model_path = config.get(
+            "model_path", os.path.join(self.model_basepath, model_name)
+        )
+        model.save_model(model_path)
+        self.cache[model_name] = model
         return self.cache[model_name]
 
-    def train_all(self):
+    def train_all(self) -> None:
         """
-        Train based on self.config
+        Train all micromodels specified in self.configs.
         """
         for config in self.configs:
             print("Training %s" % self._get_model_name(config))
             self.train_config(config)
 
-    def load_model(self, config, force_reload=False):
+    def load_model(self, config: Mapping[str, str], force_reload: bool = False):
         """
         Load model based on config
         """
         self._verify_config(config)
         model_name = self._get_model_name(config)
-        if force_reload or model_name not in self.cache:
-            model_path = config.get(
-                "model_path", os.path.join(self.model_basepath, model_name)
-            )
-            model = FEATURE_CLASSIFIER_FACTORY[config["model_type"]](
-                model_name
-            )
-            setup_config = config.get("setup_args", {})
-            if "name" not in setup_config:
-                setup_config["name"] = model_name
-            model.setup(setup_config)
-            model.load_model(model_path)
-            self.cache[model_name] = model
+
+        if not force_reload and model_name in self.cache:
+            return self.cache[model_name]
+
+        model_path = config.get(
+            "model_path", os.path.join(self.model_basepath, model_name)
+        )
+        model = FEATURE_CLASSIFIER_FACTORY[config["model_type"]](
+            model_name
+        )
+        setup_config = config.get("setup_args", {})
+        if "name" not in setup_config:
+            setup_config["name"] = model_name
+        model.setup(setup_config)
+        model.load_model(model_path)
+        self.cache[model_name] = model
         return self.cache[model_name]
 
     def infer_config(self, query, config):
         """
-        Infer based on a config
+        Run inference from the micromodel specified in a config.
         """
         self._verify_config(config)
         model_name = self._get_model_name(config)
@@ -236,25 +279,25 @@ def main():
             "model_type": "svm",
             "data": "data/testing.json",
             "feature_name": "gender",
+            "model_path": "models/gender2"
         },
-        {
-            "model_type": "cql",
-            "feature_name": "gender",
-            "data": "data/testing.json",
-            "args": {
-                "config": [
-                    {
-                        "type": "liwc",
-                        "category": "pronouns",
-                        "dominant": "I",
-                        "threshold": 0.5,
-                    }
-                ]
-            },
-        },
+        #{
+        #    "model_type": "cql",
+        #    "feature_name": "gender",
+        #    "data": "data/testing.json",
+        #    "args": {
+        #        "config": [
+        #            {
+        #                "type": "liwc",
+        #                "category": "pronouns",
+        #                "dominant": "I",
+        #                "threshold": 0.5,
+        #            }
+        #        ]
+        #    },
+        #},
     ]
-    orchestrator = Orchestrator()
-    orchestrator.set_configs(configs)
+    orchestrator = Orchestrator(MM_BASE_PATH, configs)
     orchestrator.train_all()
     features = orchestrator.infer("I am a boy")
     print(json.dumps(features, indent=2))

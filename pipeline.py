@@ -62,7 +62,7 @@ class FeatureExtractionPipeline:
             if not model_type:
                 raise ValueError("Invalid config, must specify model_type.")
 
-            model = FEATURE_CLASSIFIER_FACTORY.get(entry["model_type"])()
+            model = FEATURE_CLASSIFIER_FACTORY.get(entry["model_type"])(feature_name)
 
             if not model:
                 raise ValueError(
